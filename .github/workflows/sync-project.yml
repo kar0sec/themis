@@ -1,0 +1,16 @@
+name: Sync GitHub Project
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'status/*.json'          # oder 'status/**/*.json' wenn rekursiv
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync status → Project Board
+        run: |
+          echo "🔍 Changes detected in status/ – would trigger GraphQL sync here"
