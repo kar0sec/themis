@@ -1,0 +1,122 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [ main ]
+
+env:
+  KATALOG_FILE: bausteine-katalog.yml
+  VALID_PREFIXES: POL|PROC|CON|TMP|EVI|RIS
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # 1. Python einrichten
+      # ----------------------------------------------------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # ----------------------------------------------------------------
+      # 2. Abhängigkeiten installieren
+      # ----------------------------------------------------------------
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      # ----------------------------------------------------------------
+      # 3. YAML-Syntax prüfen
+      # ----------------------------------------------------------------
+      - name: Check YAML syntax
+        run: |
+          python3 -c "
+          import yaml, sys
+          try:
+              with open('${{ env.KATALOG_FILE }}') as f:
+                  data = yaml.safe_load(f)
+              print('✅ YAML syntax OK – {} geladen'.format('${{ env.KATALOG_FILE }}'))
+          except FileNotFoundError:
+              print('❌ Datei nicht gefunden: ${{ env.KATALOG_FILE }}')
+              sys.exit(1)
+          except yaml.YAMLError as e:
+              print('❌ YAML-Fehler: {}'.format(e))
+              sys.exit(1)
+          "
+
+      # ----------------------------------------------------------------
+      # 4. Dateinamen-Konvention prüfen
+      # ----------------------------------------------------------------
+      - name: Check document ID prefix convention
+        run: |
+          PATTERN='^(${{ env.VALID_PREFIXES }})-[0-9]{3}\.md$'
+          ERROR=0
+          for dir in docs/policies docs/procedures docs/concepts; do
+            for f in "$dir"/*.md; do
+              [ -f "$f" ] || continue
+              basename "$f" | grep -Eq "$PATTERN" || {
+                echo "❌ Ungültiger Dateiname: $f"
+                ERROR=1
+              }
+            done
+          done
+          [ "$ERROR" -eq 0 ] && echo "✅ Alle Dateinamen valide" || exit 1
+
+      # ----------------------------------------------------------------
+      # 5. (Optional) YAML-IDs vs. Dateien abgleichen
+      # ----------------------------------------------------------------
+      - name: Check consistency between YAML entries and .md files
+        run: |
+          python3 << 'PYEOF'
+          import yaml, sys, os, glob, re
+
+          kat_file = "${{ env.KATALOG_FILE }}"
+          valid_prefixes = "${{ env.VALID_PREFIXES }}"
+          id_pattern = re.compile(rf'^({valid_prefixes})-\d{{3}}$')
+
+          # IDs aus YAML extrahieren
+          with open(kat_file) as f:
+              data = yaml.safe_load(f)
+
+          yaml_ids = set()
+          for item in data.get('bausteine', []):
+              bid = item.get('id', '')
+              if not id_pattern.match(bid):
+                  print(f'❌ Ungültige ID im YAML: "{bid}"')
+                  sys.exit(1)
+              yaml_ids.add(bid)
+
+          # .md-Dateien einsammeln
+          md_files = glob.glob('docs/policies/*.md') \
+                   + glob.glob('docs/procedures/*.md') \
+                   + glob.glob('docs/concepts/*.md')
+
+          file_ids = set()
+          for fpath in md_files:
+              fname = os.path.splitext(os.path.basename(fpath))[0]
+              if not id_pattern.match(fname):
+                  print(f'❌ Übersprungene Datei (Pattern mismatch): {fpath}')
+                  continue
+              file_ids.add(fname)
+
+          # Differenzen prüfen
+          only_in_yaml = yaml_ids - file_ids
+          only_in_fs   = file_ids - yaml_ids
+
+          errors = 0
+          for bid in sorted(only_in_yaml):
+              print(f'⚠️  Im YAML, aber keine .md-Datei: {bid}')
+              errors += 1
+          for bid in sorted(only_in_fs):
+              print(f'⚠️  .md-Datei vorhanden, aber nicht im YAML: {bid}')
+              errors += 1
+
+          if errors:
+              print(f'❌ {errors} Inkonsistenz(en) gefunden')
+              sys.exit(1)
+          else:
+              print('✅ YAML-IDs und .md-Dateien sind konsistent')
+          PYEOF
