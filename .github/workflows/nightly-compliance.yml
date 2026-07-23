@@ -1,0 +1,23 @@
+name: Nightly Compliance Check
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # jede Nacht um 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Baustein completeness
+        run: |
+          echo "🔍 Prüfe: Alle 110 Bausteine vorhanden?"
+          python scripts/compliance_check.py
+      - name: Generate Nightly Report
+        run: |
+          echo "📊 Report → status/nightly-report.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: status/nightly-report.json
